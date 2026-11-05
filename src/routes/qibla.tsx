@@ -23,6 +23,12 @@ export const Route = createFileRoute("/qibla")({
 });
 
 type OrientEvt = DeviceOrientationEvent & { webkitCompassHeading?: number; webkitCompassAccuracy?: number };
+type CompassPlugin = {
+  isAvailable: () => Promise<{ available: boolean }>;
+  start: () => Promise<void>;
+  stop: () => Promise<void>;
+  addListener: (event: "heading", fn: (d: { heading: number; accuracy: number }) => void) => Promise<{ remove: () => Promise<void> }>;
+};
 type SensorState = "waiting" | "live" | "unavailable" | "needs-permission";
 
 /** Live magnetic heading from the phone's compass (rotation-vector sensor via the WebView). */
@@ -34,12 +40,50 @@ function useHeading() {
   const last = useRef<number | null>(null);
   const [unstable, setUnstable] = useState(false);
 
+  // Android app: read the phone's compass directly. WebViews often never send
+  // absolute orientation events, which wrongly showed "No compass sensor found".
+  const [native, setNative] = useState<boolean | null>(null);
   useEffect(() => {
+    let cancelled = false;
+    let handle: { remove: () => Promise<void> } | null = null;
+    let compass: CompassPlugin | null = null;
+    void (async () => {
+      const { Capacitor, registerPlugin } = await import("@capacitor/core");
+      if (cancelled) return;
+      if (Capacitor.getPlatform() !== "android" || !Capacitor.isPluginAvailable("Compass")) { setNative(false); return; }
+      compass = registerPlugin<CompassPlugin>("Compass");
+      try {
+        const { available } = await compass.isAvailable();
+        if (cancelled) return;
+        if (!available) { setNative(true); setState("unavailable"); return; }
+        setNative(true);
+        setState("waiting");
+        handle = await compass.addListener("heading", ({ heading: h, accuracy }) => {
+          last.current = smoothHeading(last.current, h);
+          setHeading(last.current);
+          setState("live");
+          samples.current = [...samples.current.slice(-19), h];
+          if (samples.current.length >= 20) setUnstable(accuracy < 2 || headingSpread(samples.current) > 25);
+        });
+        await compass.start();
+      } catch {
+        if (!cancelled) { setNative(false); }
+      }
+    })();
+    return () => {
+      cancelled = true;
+      void handle?.remove();
+      void compass?.stop().catch(() => {});
+    };
+  }, []);
+
+  useEffect(() => {
+    if (native !== false) return;
     const D = (window as unknown as { DeviceOrientationEvent?: { requestPermission?: () => Promise<string> } }).DeviceOrientationEvent;
     if (!D) { setState("unavailable"); return; }
     if (D.requestPermission) setState("needs-permission");
     else setActive(true);
-  }, []);
+  }, [native]);
 
   useEffect(() => {
     if (!active) return;
