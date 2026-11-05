@@ -1,0 +1,2 @@
+const __vite__mapDeps=(i,m=__vite__mapDeps,d=(m.f||(m.f=["assets/web-DmQxJyNq.js","assets/index-CLRTWeG4.js","assets/styles-Bns_BXR9.css"])))=>i.map(i=>d[i]);
+import{i as e,r as t}from"./index-CLRTWeG4.js";var n=t(`Network`,{web:()=>e(()=>import(`./web-DmQxJyNq.js`).then(e=>new e.NetworkWeb),__vite__mapDeps([0,1,2]))});export{n as Network};
